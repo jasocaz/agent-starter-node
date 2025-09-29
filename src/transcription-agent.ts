@@ -244,7 +244,8 @@ export class TranscriptionAgent {
       // Also send as chat to appear in built-in UI without bridging
       const chatLine = `[Transcript] ${speaker}: ${text}`;
       await this.room.localParticipant?.sendChatMessage(chatLine);
-      console.log(`Sent transcription data for ${speaker}`);
+      // Log full transcription content for debugging / observability
+      console.log(`Transcription from ${speaker}: ${text}`);
     } catch (error) {
       console.error('Error sending transcription message:', error);
     }
@@ -284,7 +285,8 @@ export class TranscriptionAgent {
         );
         const chatLine = `[Translation] ${speaker}: ${translatedText}`;
         await this.room.localParticipant?.sendChatMessage(chatLine);
-        console.log(`Sent translation data for ${speaker}`);
+        // Log full translation content
+        console.log(`Translation for ${speaker}: ${translatedText}`);
       }
     } catch (error) {
       console.error('Error translating text:', error);
