@@ -95,11 +95,18 @@ export class TranscriptionAgent {
     let collectedMs = 0;
     const targetMs = 3000;
 
+    const vadThreshold = Number(process.env.VAD_THRESHOLD ?? 800); // amplitude threshold (0..32767)
     try {
       while (this.isRunning) {
         const { value, done } = await reader.read();
         if (done) break;
         if (!value) continue;
+        const isMuted = (track as any)?.muted === true;
+        if (isMuted) {
+          buffer = [];
+          collectedMs = 0;
+          continue;
+        }
         buffer.push(value);
         const frameMs = (value.samplesPerChannel / value.sampleRate) * 1000;
         collectedMs += frameMs;
@@ -107,6 +114,9 @@ export class TranscriptionAgent {
           const combined = combineAudioFrames(buffer);
           buffer = [];
           collectedMs = 0;
+          if (this.computeRms(combined.data) < vadThreshold) {
+            continue;
+          }
           await this.processPcm16Frame(combined.data, combined.sampleRate, combined.channels, participant);
         }
       }
@@ -161,6 +171,17 @@ export class TranscriptionAgent {
     buffer.writeUInt32LE(dataSize, 40);
     Buffer.from(pcm16.buffer).copy(buffer, 44);
     return buffer;
+  }
+
+  private computeRms(pcm16: Int16Array): number {
+    if (pcm16.length === 0) return 0;
+    let sum = 0;
+    for (let i = 0; i < pcm16.length; i++) {
+      const sample = pcm16[i] ?? 0;
+      sum += sample * sample;
+    }
+    const mean = sum / pcm16.length;
+    return Math.sqrt(mean);
   }
 
   private async processAudioChunk(audioData: Float32Array[], participant: RemoteParticipant) {
