@@ -52,7 +52,7 @@ export class TranscriptionAgent {
           );
         } catch {}
       }
-      console.log(`Connected to room: ${this.options.roomName}`);
+      console.log(`Connected to room: ${this.options.roomName} (targetLanguage=${this.options.targetLanguage})`);
 
       // Set up event listeners
       this.room.on(RoomEvent.TrackSubscribed, this.handleTrackSubscribed.bind(this));

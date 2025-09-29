@@ -67,7 +67,7 @@ app.post('/start', async (req, res) => {
     await agent.start();
     activeSessions.set(roomName, agent);
 
-    console.log(`Started captions agent for room: ${roomName}`);
+    console.log(`Started captions agent for room: ${roomName} (targetLanguage=${targetLanguage || 'en'})`);
     return res.json({ message: 'Captions started successfully', roomName });
   } catch (error) {
     console.error('Error starting captions:', error);
