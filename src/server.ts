@@ -68,10 +68,10 @@ app.post('/start', async (req, res) => {
     activeSessions.set(roomName, agent);
 
     console.log(`Started captions agent for room: ${roomName}`);
-    res.json({ message: 'Captions started successfully', roomName });
+    return res.json({ message: 'Captions started successfully', roomName });
   } catch (error) {
     console.error('Error starting captions:', error);
-    res.status(500).json({ error: 'Failed to start captions' });
+    return res.status(500).json({ error: 'Failed to start captions' });
   }
 });
 
@@ -93,10 +93,10 @@ app.post('/stop', async (req, res) => {
     activeSessions.delete(roomName);
 
     console.log(`Stopped captions agent for room: ${roomName}`);
-    res.json({ message: 'Captions stopped successfully', roomName });
+    return res.json({ message: 'Captions stopped successfully', roomName });
   } catch (error) {
     console.error('Error stopping captions:', error);
-    res.status(500).json({ error: 'Failed to stop captions' });
+    return res.status(500).json({ error: 'Failed to stop captions' });
   }
 });
 

@@ -113,6 +113,11 @@ export class TranscriptionAgent {
   private async processAudioChunk(audioData: Float32Array[], participant: RemoteParticipant) {
     try {
       // Convert audio data to format suitable for OpenAI Whisper
+      if (audioData.length === 0 || !audioData[0]) {
+        console.log('No audio data to process');
+        return;
+      }
+      
       const flatArray = new Float32Array(audioData.length * audioData[0].length);
       let offset = 0;
       for (const chunk of audioData) {
