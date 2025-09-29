@@ -26,6 +26,7 @@ export class TranscriptionAgent {
   private openai: OpenAI;
   private isRunning = false;
   private options: TranscriptionAgentOptions;
+  private pendingBySpeaker: Map<string, { text: string; timer?: NodeJS.Timeout }>; // accumulate until sentence end or pause
 
   constructor(options: TranscriptionAgentOptions) {
     this.options = options;
@@ -33,6 +34,7 @@ export class TranscriptionAgent {
     this.openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY,
     });
+    this.pendingBySpeaker = new Map();
   }
 
   async start() {
@@ -73,6 +75,13 @@ export class TranscriptionAgent {
     }
 
     try {
+      // Flush any pending buffered text before leaving
+      await Promise.all(
+        Array.from(this.pendingBySpeaker.entries()).map(([speaker, pending]) =>
+          pending.text ? this.flushSentence(speaker) : Promise.resolve(),
+        ),
+      );
+      this.pendingBySpeaker.clear();
       await this.room.disconnect();
       this.isRunning = false;
       console.log('Transcription agent stopped');
@@ -147,10 +156,7 @@ export class TranscriptionAgent {
       });
       const transcribedText = (transcription as any)?.text?.trim?.();
       if (transcribedText) {
-        await this.sendTranscriptionMessage(participant.identity, transcribedText);
-        if (this.options.targetLanguage && this.options.targetLanguage !== 'en') {
-          await this.translateAndSend(transcribedText, participant.identity);
-        }
+        await this.appendAndMaybeFlush(participant.identity, transcribedText);
       }
     } catch (e) {
       console.error('processPcm16Frame error:', e);
@@ -298,6 +304,40 @@ export class TranscriptionAgent {
       }
     } catch (error) {
       console.error('Error translating text:', error);
+    }
+  }
+
+  // Buffer text until we detect a sentence end or a pause; then flush as one unit
+  private async appendAndMaybeFlush(speaker: string, slice: string) {
+    const entry = this.pendingBySpeaker.get(speaker) ?? { text: '' };
+    const needsSpace = entry.text && !/\s$/.test(entry.text);
+    entry.text = (entry.text + (needsSpace ? ' ' : '') + slice).trim();
+    // clear previous pause timer
+    if (entry.timer) clearTimeout(entry.timer);
+    this.pendingBySpeaker.set(speaker, entry);
+
+    const endsSentence = /[.!?…\)\]"\u3002！？。]$/.test(entry.text);
+    if (endsSentence) {
+      await this.flushSentence(speaker);
+      return;
+    }
+    // Pause-based flush after 2 seconds if no new text appended
+    entry.timer = setTimeout(() => {
+      void this.flushSentence(speaker);
+    }, 2000);
+  }
+
+  private async flushSentence(speaker: string) {
+    const entry = this.pendingBySpeaker.get(speaker);
+    if (!entry) return;
+    const text = entry.text?.trim?.();
+    if (!text) return;
+    // reset before awaiting network calls
+    if (entry.timer) clearTimeout(entry.timer);
+    this.pendingBySpeaker.set(speaker, { text: '' });
+    await this.sendTranscriptionMessage(speaker, text);
+    if (this.options.targetLanguage && this.options.targetLanguage !== 'en') {
+      await this.translateAndSend(text, speaker);
     }
   }
 

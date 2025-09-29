@@ -100,6 +100,16 @@ app.post('/stop', async (req, res) => {
   }
 });
 
+// Auto-cleanup: if no non-agent participants remain, stop the agent after a short delay
+setInterval(async () => {
+  try {
+    for (const [roomName, agent] of activeSessions) {
+      // We cannot inspect Room participants from here; rely on LK RoomService if configured later.
+      // Placeholder hook for future enhancement.
+    }
+  } catch {}
+}, 60000);
+
 // List active sessions
 app.get('/sessions', (req, res) => {
   const sessions = Array.from(activeSessions.keys());
