@@ -1,6 +1,9 @@
+import '@livekit/rtc-node';
 import { Room, RoomEvent, RemoteParticipant, Track, RemoteTrack } from 'livekit-client';
 import OpenAI from 'openai';
 import { toFile } from 'openai/uploads';
+
+// Importing '@livekit/rtc-node' registers a WebRTC implementation for Node
 
 interface TranscriptionAgentOptions {
   livekitUrl: string;
@@ -75,6 +78,11 @@ export class TranscriptionAgent {
 
   private async setupAudioTranscription(track: RemoteTrack, participant: RemoteParticipant) {
     try {
+      // In Node, Web Audio APIs are not available; skip if AudioContext is missing
+      if (typeof (globalThis as any).AudioContext === 'undefined') {
+        console.warn('AudioContext not available in this environment; skipping local audio processing');
+        return;
+      }
       // Get audio stream from track
       const stream = track.mediaStream;
       if (!stream) {

@@ -29,6 +29,9 @@ importers:
       '@livekit/noise-cancellation-node':
         specifier: ^0.1.9
         version: 0.1.9
+      '@livekit/rtc-node':
+        specifier: ^0.13.19
+        version: 0.13.19
       cors:
         specifier: ^2.8.5
         version: 2.8.5
