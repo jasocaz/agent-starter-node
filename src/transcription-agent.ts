@@ -5,6 +5,9 @@ import {
   Track,
   type RemoteTrack,
   TrackKind,
+  AudioStream,
+  type AudioFrame,
+  combineAudioFrames,
 } from '@livekit/rtc-node';
 import OpenAI from 'openai';
 import { toFile } from 'openai/uploads';
@@ -78,13 +81,87 @@ export class TranscriptionAgent {
   private handleTrackSubscribed(track: RemoteTrack, publication: any, participant: RemoteParticipant) {
     if (track.kind === TrackKind.KIND_AUDIO) {
       console.log(`Audio track subscribed from: ${participant.identity}`);
-      // STT pipeline disabled for now in Node. We'll add AudioStream-based capture next.
+      void this.startAudioCaptureLoop(track, participant);
     }
   }
 
   // No-op: using @livekit/rtc-node which provides a Node-compatible Room
 
-  // Node audio capture is not implemented here
+  private async startAudioCaptureLoop(track: RemoteTrack, participant: RemoteParticipant) {
+    // Create a Web-Streams reader over PCM16 audio frames
+    const stream = new AudioStream(track, { sampleRate: 16000, numChannels: 1, frameSizeMs: 20 });
+    const reader = stream.getReader();
+    let buffer: AudioFrame[] = [];
+    let collectedMs = 0;
+    const targetMs = 3000;
+
+    try {
+      while (this.isRunning) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        buffer.push(value);
+        const frameMs = (value.samplesPerChannel / value.sampleRate) * 1000;
+        collectedMs += frameMs;
+        if (collectedMs >= targetMs) {
+          const combined = combineAudioFrames(buffer);
+          buffer = [];
+          collectedMs = 0;
+          await this.processPcm16Frame(combined.data, combined.sampleRate, combined.channels, participant);
+        }
+      }
+    } catch (err) {
+      console.error('AudioStream loop error:', err);
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {}
+    }
+  }
+
+  private async processPcm16Frame(data: Int16Array, sampleRate: number, channels: number, participant: RemoteParticipant) {
+    try {
+      const wav = this.encodeWav(data, sampleRate, channels);
+      const transcription = await this.openai.audio.transcriptions.create({
+        file: await toFile(wav, 'audio.wav', { type: 'audio/wav' }),
+        model: process.env.OPENAI_STT_MODEL || 'gpt-4o-transcribe',
+        language: 'en',
+      });
+      const transcribedText = (transcription as any)?.text?.trim?.();
+      if (transcribedText) {
+        await this.sendTranscriptionMessage(participant.identity, transcribedText);
+        if (this.options.targetLanguage && this.options.targetLanguage !== 'en') {
+          await this.translateAndSend(transcribedText, participant.identity);
+        }
+      }
+    } catch (e) {
+      console.error('processPcm16Frame error:', e);
+    }
+  }
+
+  private encodeWav(pcm16: Int16Array, sampleRate: number, numChannels: number): Buffer {
+    const bytesPerSample = 2;
+    const blockAlign = numChannels * bytesPerSample;
+    const byteRate = sampleRate * blockAlign;
+    const dataSize = pcm16.length * bytesPerSample;
+    const buffer = Buffer.alloc(44 + dataSize);
+
+    buffer.write('RIFF', 0);
+    buffer.writeUInt32LE(36 + dataSize, 4);
+    buffer.write('WAVE', 8);
+    buffer.write('fmt ', 12);
+    buffer.writeUInt32LE(16, 16); // PCM header size
+    buffer.writeUInt16LE(1, 20); // PCM format
+    buffer.writeUInt16LE(numChannels, 22);
+    buffer.writeUInt32LE(sampleRate, 24);
+    buffer.writeUInt32LE(byteRate, 28);
+    buffer.writeUInt16LE(blockAlign, 32);
+    buffer.writeUInt16LE(16, 34); // bits per sample
+    buffer.write('data', 36);
+    buffer.writeUInt32LE(dataSize, 40);
+    Buffer.from(pcm16.buffer).copy(buffer, 44);
+    return buffer;
+  }
 
   private async processAudioChunk(audioData: Float32Array[], participant: RemoteParticipant) {
     try {
