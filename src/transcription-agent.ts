@@ -235,9 +235,13 @@ export class TranscriptionAgent {
 
   private async sendTranscriptionMessage(speaker: string, text: string) {
     try {
-      const message = `[Transcript] ${speaker}: ${text}`;
-      await this.room.localParticipant?.sendChatMessage(message);
-      console.log(`Sent transcription: ${message}`);
+      // Publish as data for clients to bridge into chat
+      const json = JSON.stringify({ type: 'transcription', speaker, text, timestamp: new Date().toISOString() });
+      await this.room.localParticipant?.publishData?.(
+        new TextEncoder().encode(json),
+        { reliable: true, topic: 'captions' as any }
+      );
+      console.log(`Sent transcription data for ${speaker}`);
     } catch (error) {
       console.error('Error sending transcription message:', error);
     }
@@ -263,9 +267,19 @@ export class TranscriptionAgent {
 
       const translatedText = translation.choices[0]?.message?.content;
       if (translatedText) {
-        const message = `[Translation] ${speaker}: ${translatedText}`;
-        await this.room.localParticipant?.sendChatMessage(message);
-        console.log(`Sent translation: [Translation] ${speaker}: ${translatedText}`);
+        const json = JSON.stringify({
+          type: 'translation',
+          speaker,
+          originalText: text,
+          translatedText,
+          targetLanguage: this.options.targetLanguage,
+          timestamp: new Date().toISOString(),
+        });
+        await this.room.localParticipant?.publishData?.(
+          new TextEncoder().encode(json),
+          { reliable: true, topic: 'captions' as any }
+        );
+        console.log(`Sent translation data for ${speaker}`);
       }
     } catch (error) {
       console.error('Error translating text:', error);
