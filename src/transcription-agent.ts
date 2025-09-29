@@ -1,5 +1,6 @@
 import { Room, RoomEvent, RemoteParticipant, Track, RemoteTrack } from 'livekit-client';
 import OpenAI from 'openai';
+import { toFile } from 'openai/uploads';
 
 interface TranscriptionAgentOptions {
   livekitUrl: string;
@@ -128,28 +129,30 @@ export class TranscriptionAgent {
       // Convert to 16-bit PCM for Whisper
       const pcm16 = new Int16Array(flatArray.length);
       for (let i = 0; i < flatArray.length; i++) {
-        pcm16[i] = Math.max(-32768, Math.min(32767, flatArray[i] * 32768));
+        const sample = flatArray[i] ?? 0;
+        pcm16[i] = Math.max(-32768, Math.min(32767, sample * 32768));
       }
 
       // Create audio buffer for OpenAI
       const audioBuffer = Buffer.from(pcm16.buffer);
-      
-      // Transcribe with OpenAI Whisper
+
+      // Transcribe with OpenAI Whisper (Node: use toFile instead of File)
       const transcription = await this.openai.audio.transcriptions.create({
-        file: new File([audioBuffer], 'audio.wav', { type: 'audio/wav' }),
+        file: await toFile(audioBuffer, 'audio.wav', { type: 'audio/wav' }),
         model: 'whisper-1',
         language: 'en', // You can make this configurable
       });
 
-      if (transcription.text.trim()) {
-        console.log(`Transcription from ${participant.identity}: ${transcription.text}`);
+      const transcribedText = (transcription as any)?.text?.trim?.();
+      if (transcribedText) {
+        console.log(`Transcription from ${participant.identity}: ${transcribedText}`);
         
         // Send transcription as chat message
-        await this.sendTranscriptionMessage(participant.identity, transcription.text);
+        await this.sendTranscriptionMessage(participant.identity, transcribedText);
         
         // Translate if target language is different
         if (this.options.targetLanguage !== 'en') {
-          await this.translateAndSend(transcription.text, participant.identity);
+          await this.translateAndSend(transcribedText, participant.identity);
         }
       }
     } catch (error) {
