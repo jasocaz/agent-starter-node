@@ -1,4 +1,11 @@
-import { Room, RoomEvent, RemoteParticipant, Track, RemoteTrack } from 'livekit-client';
+import {
+  Room,
+  RoomEvent,
+  RemoteParticipant,
+  Track,
+  type RemoteTrack,
+  TrackKind,
+} from '@livekit/rtc-node';
 import OpenAI from 'openai';
 import { toFile } from 'openai/uploads';
 
@@ -32,8 +39,6 @@ export class TranscriptionAgent {
     }
 
     try {
-      // Ensure Node has a WebRTC implementation registered
-      await this.ensureNodeWebRTC();
       // Connect to the room
       await this.room.connect(this.options.livekitUrl, this.options.token);
       console.log(`Connected to room: ${this.options.roomName}`);
@@ -71,65 +76,15 @@ export class TranscriptionAgent {
   }
 
   private handleTrackSubscribed(track: RemoteTrack, publication: any, participant: RemoteParticipant) {
-    if (track.kind === Track.Kind.Audio) {
+    if (track.kind === TrackKind.KIND_AUDIO) {
       console.log(`Audio track subscribed from: ${participant.identity}`);
-      this.setupAudioTranscription(track, participant);
+      // STT pipeline disabled for now in Node. We'll add AudioStream-based capture next.
     }
   }
 
-  private async ensureNodeWebRTC() {
-    // livekit-client throws in Node if no WebRTC globals exist.
-    // Importing @livekit/rtc-node registers a Node-compatible implementation.
-    const hasWebRTC =
-      typeof (globalThis as any).RTCPeerConnection !== 'undefined' &&
-      typeof (globalThis as any).RTCSessionDescription !== 'undefined';
-    if (!hasWebRTC) {
-      await import('@livekit/rtc-node');
-    }
-  }
+  // No-op: using @livekit/rtc-node which provides a Node-compatible Room
 
-  private async setupAudioTranscription(track: RemoteTrack, participant: RemoteParticipant) {
-    try {
-      // In Node, Web Audio APIs are not available; skip if AudioContext is missing
-      if (typeof (globalThis as any).AudioContext === 'undefined') {
-        console.warn('AudioContext not available in this environment; skipping local audio processing');
-        return;
-      }
-      // Get audio stream from track
-      const stream = track.mediaStream;
-      if (!stream) {
-        console.log('No media stream available');
-        return;
-      }
-
-      // Create audio context for processing
-      const audioContext = new AudioContext();
-      const source = audioContext.createMediaStreamSource(stream);
-      
-      // Create a processor to capture audio data
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      
-      let audioBuffer: Float32Array[] = [];
-      const sampleRate = audioContext.sampleRate;
-
-      processor.onaudioprocess = async (event) => {
-        const inputData = event.inputBuffer.getChannelData(0);
-        audioBuffer.push(new Float32Array(inputData));
-
-        // Process audio in chunks (every 3 seconds)
-        if (audioBuffer.length >= Math.floor(sampleRate * 3 / 4096)) {
-          await this.processAudioChunk(audioBuffer, participant);
-          audioBuffer = [];
-        }
-      };
-
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-
-    } catch (error) {
-      console.error('Error setting up audio transcription:', error);
-    }
-  }
+  // Node audio capture is not implemented here
 
   private async processAudioChunk(audioData: Float32Array[], participant: RemoteParticipant) {
     try {
@@ -183,7 +138,7 @@ export class TranscriptionAgent {
   private async sendTranscriptionMessage(speaker: string, text: string) {
     try {
       const message = `[Transcript] ${speaker}: ${text}`;
-      await this.room.localParticipant.publishData(
+      await this.room.localParticipant?.publishData?.(
         new TextEncoder().encode(JSON.stringify({
           type: 'transcription',
           speaker,
@@ -218,7 +173,7 @@ export class TranscriptionAgent {
 
       const translatedText = translation.choices[0]?.message?.content;
       if (translatedText) {
-        await this.room.localParticipant.publishData(
+        await this.room.localParticipant?.publishData?.(
           new TextEncoder().encode(JSON.stringify({
             type: 'translation',
             speaker,
