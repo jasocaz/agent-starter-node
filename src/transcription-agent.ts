@@ -28,6 +28,7 @@ export class TranscriptionAgent {
   private options: TranscriptionAgentOptions;
   private pendingBySpeaker: Map<string, { text: string; timer?: NodeJS.Timeout }>; // accumulate until sentence end or pause
   private sentenceIdBySpeaker: Map<string, number>;
+  private recentBySpeaker: Map<string, { lastText: string; lastAt: number }>; // repetition guard
 
   constructor(options: TranscriptionAgentOptions) {
     this.options = options;
@@ -37,6 +38,7 @@ export class TranscriptionAgent {
     });
     this.pendingBySpeaker = new Map();
     this.sentenceIdBySpeaker = new Map();
+    this.recentBySpeaker = new Map();
   }
 
   async start() {
@@ -136,7 +138,7 @@ export class TranscriptionAgent {
           if (this.computeRms(combined.data) < vadThreshold) {
             continue;
           }
-          await this.processPcm16Frame(combined.data, combined.sampleRate, combined.channels, participant);
+          await this.processPcm16Frame(combined.data, combined.sampleRate, combined.channels, participant, this.computeRms(combined.data), collectedMs);
         }
       }
     } catch (err) {
@@ -148,7 +150,7 @@ export class TranscriptionAgent {
     }
   }
 
-  private async processPcm16Frame(data: Int16Array, sampleRate: number, channels: number, participant: RemoteParticipant) {
+  private async processPcm16Frame(data: Int16Array, sampleRate: number, channels: number, participant: RemoteParticipant, rmsHint?: number, windowMs?: number) {
     try {
       const wav = this.encodeWav(data, sampleRate, channels);
       const transcription = await this.openai.audio.transcriptions.create({
@@ -158,6 +160,25 @@ export class TranscriptionAgent {
       });
       const transcribedText = (transcription as any)?.text?.trim?.();
       if (transcribedText) {
+        // Confidence/repetition gating
+        const wordCount = transcribedText.split(/\s+/).filter(Boolean).length;
+        const rms = rmsHint ?? this.computeRms(data);
+        const short = wordCount <= 2;
+        const highRms = rms >= Number(process.env.SHORT_HIGH_RMS ?? 1200);
+        const blocklist = (process.env.BLOCKLIST_PHRASES || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+        const isBlocked = blocklist.includes(transcribedText.toLowerCase());
+        const repInfo = this.recentBySpeaker.get(participant.identity) ?? { lastText: '', lastAt: 0 };
+        const now = Date.now();
+        const isRepeat = repInfo.lastText === transcribedText && (now - repInfo.lastAt) < Number(process.env.REPEAT_WINDOW_MS ?? 7000);
+
+        // Drop conditions: obvious blocklist or low-energy very short repeats
+        if (isBlocked || (short && !highRms && isRepeat)) {
+          console.log(`Dropped low-confidence/repeat (#${this.sentenceIdBySpeaker.get(participant.identity) ?? 0}):`, transcribedText, { rms, wordCount });
+          return;
+        }
+
+        // Accept and update repetition memory
+        this.recentBySpeaker.set(participant.identity, { lastText: transcribedText, lastAt: now });
         await this.appendAndMaybeFlush(participant.identity, transcribedText);
       }
     } catch (e) {
