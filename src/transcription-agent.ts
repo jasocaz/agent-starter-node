@@ -241,6 +241,9 @@ export class TranscriptionAgent {
         new TextEncoder().encode(json),
         { reliable: true, topic: 'captions' as any }
       );
+      // Also send as chat to appear in built-in UI without bridging
+      const chatLine = `[Transcript] ${speaker}: ${text}`;
+      await this.room.localParticipant?.sendChatMessage(chatLine);
       console.log(`Sent transcription data for ${speaker}`);
     } catch (error) {
       console.error('Error sending transcription message:', error);
@@ -279,6 +282,8 @@ export class TranscriptionAgent {
           new TextEncoder().encode(json),
           { reliable: true, topic: 'captions' as any }
         );
+        const chatLine = `[Translation] ${speaker}: ${translatedText}`;
+        await this.room.localParticipant?.sendChatMessage(chatLine);
         console.log(`Sent translation data for ${speaker}`);
       }
     } catch (error) {
