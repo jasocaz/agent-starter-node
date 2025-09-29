@@ -1,4 +1,3 @@
-import '@livekit/rtc-node';
 import { Room, RoomEvent, RemoteParticipant, Track, RemoteTrack } from 'livekit-client';
 import OpenAI from 'openai';
 import { toFile } from 'openai/uploads';
@@ -33,6 +32,8 @@ export class TranscriptionAgent {
     }
 
     try {
+      // Ensure Node has a WebRTC implementation registered
+      await this.ensureNodeWebRTC();
       // Connect to the room
       await this.room.connect(this.options.livekitUrl, this.options.token);
       console.log(`Connected to room: ${this.options.roomName}`);
@@ -73,6 +74,17 @@ export class TranscriptionAgent {
     if (track.kind === Track.Kind.Audio) {
       console.log(`Audio track subscribed from: ${participant.identity}`);
       this.setupAudioTranscription(track, participant);
+    }
+  }
+
+  private async ensureNodeWebRTC() {
+    // livekit-client throws in Node if no WebRTC globals exist.
+    // Importing @livekit/rtc-node registers a Node-compatible implementation.
+    const hasWebRTC =
+      typeof (globalThis as any).RTCPeerConnection !== 'undefined' &&
+      typeof (globalThis as any).RTCSessionDescription !== 'undefined';
+    if (!hasWebRTC) {
+      await import('@livekit/rtc-node');
     }
   }
 
