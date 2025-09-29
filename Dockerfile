@@ -36,6 +36,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # Build the project
+# Your package.json must contain a "build" script, such as `"build": "tsc"`
 RUN pnpm build
 
 # Create a non-privileged user that the app will run under
@@ -56,6 +57,7 @@ USER appuser
 # Pre-download any ML models or files the agent needs
 # This ensures the container is ready to run immediately without downloading
 # dependencies at runtime, which improves startup time and reliability
+# Your package.json must contain a "download-files" script, such as `"download-files": "pnpm run build && node dist/agent.js download-files"`
 RUN pnpm download-files
 
 # Switch back to root to remove dev dependencies and finalize setup
@@ -68,4 +70,5 @@ ENV NODE_ENV=production
 
 # Run the application
 # The "start" command tells the worker to connect to LiveKit and begin waiting for jobs.
+# Your package.json must contain a "start" script, such as `"start": "node dist/agent.js start"`
 CMD [ "pnpm", "start" ]

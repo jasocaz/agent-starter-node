@@ -13,9 +13,11 @@
     "format:check": "prettier --check \"**/*.{ts,js,json,md}\"",
     "test": "node --test --import tsx",
     "test:watch": "node --test --watch --import tsx",
-    "dev": "tsx src/agent.ts dev",
+    "dev": "tsx src/server.ts",
+    "dev:agent": "tsx src/agent.ts dev",
     "download-files": "pnpm run build && node dist/agent.js download-files",
-    "start": "node dist/agent.js start"
+    "start": "node dist/server.js",
+    "start:agent": "node dist/agent.js start"
   },
   "engines": {
     "node": ">=22.0.0",
@@ -25,6 +27,8 @@
     "@eslint/js": "^9.34.0",
     "@trivago/prettier-plugin-sort-imports": "^5.2.2",
     "@types/node": "^22.18.0",
+    "@types/express": "^4.17.17",
+    "@types/cors": "^2.8.13",
     "eslint": "^9.34.0",
     "globals": "^16.3.0",
     "jiti": "^2.5.1",
@@ -40,6 +44,11 @@
     "@livekit/agents-plugin-openai": "^1.0.0",
     "@livekit/agents-plugin-silero": "^1.0.0",
     "@livekit/noise-cancellation-node": "^0.1.9",
+    "livekit-client": "^2.15.7",
+    "livekit-server-sdk": "^2.13.3",
+    "openai": "^4.0.0",
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "zod": "^3.25.76"
   }
