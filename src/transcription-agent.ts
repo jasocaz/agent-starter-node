@@ -236,10 +236,7 @@ export class TranscriptionAgent {
   private async sendTranscriptionMessage(speaker: string, text: string) {
     try {
       const message = `[Transcript] ${speaker}: ${text}`;
-      await this.room.localParticipant?.publishData?.(
-        new TextEncoder().encode(message),
-        { reliable: true, topic: 'lk-chat' as any }
-      );
+      await this.room.localParticipant?.sendChatMessage(message);
       console.log(`Sent transcription: ${message}`);
     } catch (error) {
       console.error('Error sending transcription message:', error);
@@ -267,10 +264,7 @@ export class TranscriptionAgent {
       const translatedText = translation.choices[0]?.message?.content;
       if (translatedText) {
         const message = `[Translation] ${speaker}: ${translatedText}`;
-        await this.room.localParticipant?.publishData?.(
-          new TextEncoder().encode(message),
-          { reliable: true, topic: 'lk-chat' as any }
-        );
+        await this.room.localParticipant?.sendChatMessage(message);
         console.log(`Sent translation: [Translation] ${speaker}: ${translatedText}`);
       }
     } catch (error) {
