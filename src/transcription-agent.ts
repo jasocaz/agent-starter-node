@@ -27,6 +27,7 @@ export class TranscriptionAgent {
   private isRunning = false;
   private options: TranscriptionAgentOptions;
   private pendingBySpeaker: Map<string, { text: string; timer?: NodeJS.Timeout }>; // accumulate until sentence end or pause
+  private sentenceIdBySpeaker: Map<string, number>;
 
   constructor(options: TranscriptionAgentOptions) {
     this.options = options;
@@ -35,6 +36,7 @@ export class TranscriptionAgent {
       apiKey: process.env.OPENAI_API_KEY,
     });
     this.pendingBySpeaker = new Map();
+    this.sentenceIdBySpeaker = new Map();
   }
 
   async start() {
@@ -247,10 +249,10 @@ export class TranscriptionAgent {
     }
   }
 
-  private async sendTranscriptionMessage(speaker: string, text: string) {
+  private async sendTranscriptionMessage(speaker: string, text: string, sentenceId?: number) {
     try {
       // Publish as data for clients to bridge into chat
-      const json = JSON.stringify({ type: 'transcription', speaker, text, timestamp: new Date().toISOString() });
+      const json = JSON.stringify({ type: 'transcription', speaker, text, sentenceId, timestamp: new Date().toISOString() });
       await this.room.localParticipant?.publishData?.(
         new TextEncoder().encode(json),
         { reliable: true, topic: 'captions' as any }
@@ -259,13 +261,13 @@ export class TranscriptionAgent {
       const chatLine = `[Transcript] ${speaker}: ${text}`;
       await this.room.localParticipant?.sendChatMessage(chatLine);
       // Log full transcription content for debugging / observability
-      console.log(`Transcription from ${speaker}: ${text}`);
+      console.log(`Transcription from ${speaker} (#${sentenceId ?? 0}): ${text}`);
     } catch (error) {
       console.error('Error sending transcription message:', error);
     }
   }
 
-  private async translateAndSend(text: string, speaker: string) {
+  private async translateAndSend(text: string, speaker: string, sentenceId?: number) {
     try {
       const translation = await this.openai.chat.completions.create({
         model: 'gpt-4o',
@@ -291,6 +293,7 @@ export class TranscriptionAgent {
           originalText: text,
           translatedText,
           targetLanguage: this.options.targetLanguage,
+          sentenceId,
           timestamp: new Date().toISOString(),
         });
         await this.room.localParticipant?.publishData?.(
@@ -300,7 +303,7 @@ export class TranscriptionAgent {
         const chatLine = `[Translation] ${speaker}: ${translatedText}`;
         await this.room.localParticipant?.sendChatMessage(chatLine);
         // Log full translation content
-        console.log(`Translation for ${speaker}: ${translatedText}`);
+        console.log(`Translation for ${speaker} (#${sentenceId ?? 0}): ${translatedText}`);
       }
     } catch (error) {
       console.error('Error translating text:', error);
@@ -335,9 +338,11 @@ export class TranscriptionAgent {
     // reset before awaiting network calls
     if (entry.timer) clearTimeout(entry.timer);
     this.pendingBySpeaker.set(speaker, { text: '' });
-    await this.sendTranscriptionMessage(speaker, text);
+    const nextId = (this.sentenceIdBySpeaker.get(speaker) ?? 0) + 1;
+    this.sentenceIdBySpeaker.set(speaker, nextId);
+    await this.sendTranscriptionMessage(speaker, text, nextId);
     if (this.options.targetLanguage && this.options.targetLanguage !== 'en') {
-      await this.translateAndSend(text, speaker);
+      await this.translateAndSend(text, speaker, nextId);
     }
   }
 
