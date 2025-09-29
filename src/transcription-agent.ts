@@ -44,6 +44,14 @@ export class TranscriptionAgent {
     try {
       // Connect to the room
       await this.room.connect(this.options.livekitUrl, this.options.token);
+      // Mark this participant as an agent for client-side filtering (best effort)
+      if (this.room?.localParticipant?.updateMetadata) {
+        try {
+          await this.room.localParticipant.updateMetadata(
+            JSON.stringify({ role: 'agent', subtype: 'captions' }),
+          );
+        } catch {}
+      }
       console.log(`Connected to room: ${this.options.roomName}`);
 
       // Set up event listeners
