@@ -19,6 +19,7 @@ interface TranscriptionAgentOptions {
   token: string;
   roomName: string;
   targetLanguage: string;
+  sttLanguage?: string;
 }
 
 export class TranscriptionAgent {
@@ -196,7 +197,7 @@ export class TranscriptionAgent {
   private async processPcm16Frame(data: Int16Array, sampleRate: number, channels: number, participant: RemoteParticipant, rmsHint?: number, windowMs?: number) {
     try {
       const wav = this.encodeWav(data, sampleRate, channels);
-      const sttLang = process.env.STT_LANGUAGE; // if unset, let model auto-detect
+      const sttLang = this.options.sttLanguage || process.env.STT_LANGUAGE; // if unset, let model auto-detect
       const transcription = await this.openai.audio.transcriptions.create({
         file: await toFile(wav, 'audio.wav', { type: 'audio/wav' }),
         model: process.env.OPENAI_STT_MODEL || 'gpt-4o-transcribe',

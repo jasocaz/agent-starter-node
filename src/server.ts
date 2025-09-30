@@ -21,7 +21,7 @@ app.get('/health', (req, res) => {
 // Start captions for a room
 app.post('/start', async (req, res) => {
   try {
-    const { roomName, targetLanguage } = req.body;
+    const { roomName, targetLanguage, sttLanguage } = req.body;
     
     if (!roomName) {
       return res.status(400).json({ error: 'Missing roomName' });
@@ -62,12 +62,13 @@ app.post('/start', async (req, res) => {
       token,
       roomName,
       targetLanguage: targetLanguage || 'en',
+      sttLanguage: sttLanguage || undefined,
     });
 
     await agent.start();
     activeSessions.set(roomName, agent);
 
-    console.log(`Started captions agent for room: ${roomName} (targetLanguage=${targetLanguage || 'en'})`);
+    console.log(`Started captions agent for room: ${roomName} (targetLanguage=${targetLanguage || 'en'}, sttLanguage=${sttLanguage || 'auto'})`);
     return res.json({ message: 'Captions started successfully', roomName });
   } catch (error) {
     console.error('Error starting captions:', error);
