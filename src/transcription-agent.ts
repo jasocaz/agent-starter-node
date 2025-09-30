@@ -196,11 +196,12 @@ export class TranscriptionAgent {
   private async processPcm16Frame(data: Int16Array, sampleRate: number, channels: number, participant: RemoteParticipant, rmsHint?: number, windowMs?: number) {
     try {
       const wav = this.encodeWav(data, sampleRate, channels);
+      const sttLang = process.env.STT_LANGUAGE; // if unset, let model auto-detect
       const transcription = await this.openai.audio.transcriptions.create({
         file: await toFile(wav, 'audio.wav', { type: 'audio/wav' }),
         model: process.env.OPENAI_STT_MODEL || 'gpt-4o-transcribe',
-        language: 'en',
-      });
+        ...(sttLang ? { language: sttLang } : {}),
+      } as any);
       const transcribedText = (transcription as any)?.text?.trim?.();
       if (transcribedText) {
         // Confidence/repetition gating
@@ -485,7 +486,7 @@ export class TranscriptionAgent {
     await this.sendTranscriptionMessage(speaker, text, sid, final);
     if (final) {
       // translate only on final to reduce cost; if desired, we can also update on non-final
-      if (this.options.targetLanguage && this.options.targetLanguage !== 'en') {
+      if (this.options.targetLanguage) {
         await this.translateAndSend(text, speaker, sid);
       }
       this.pendingBySpeaker.set(speaker, { text: '' });
