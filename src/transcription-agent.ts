@@ -29,6 +29,8 @@ export class TranscriptionAgent {
   private pendingBySpeaker: Map<string, { text: string; timer?: NodeJS.Timeout }>; // accumulate until sentence end or pause
   private sentenceIdBySpeaker: Map<string, number>;
   private recentBySpeaker: Map<string, { lastText: string; lastAt: number }>; // repetition guard
+  private currentSentenceId: Map<string, number>; // active sentence id per speaker
+  private lastTimeoutFlushAt: Map<string, number>; // for diagnostics
 
   constructor(options: TranscriptionAgentOptions) {
     this.options = options;
@@ -39,6 +41,8 @@ export class TranscriptionAgent {
     this.pendingBySpeaker = new Map();
     this.sentenceIdBySpeaker = new Map();
     this.recentBySpeaker = new Map();
+    this.currentSentenceId = new Map();
+    this.lastTimeoutFlushAt = new Map();
   }
 
   async start() {
@@ -270,10 +274,10 @@ export class TranscriptionAgent {
     }
   }
 
-  private async sendTranscriptionMessage(speaker: string, text: string, sentenceId?: number) {
+  private async sendTranscriptionMessage(speaker: string, text: string, sentenceId?: number, final?: boolean) {
     try {
       // Publish as data for clients to bridge into chat
-      const json = JSON.stringify({ type: 'transcription', speaker, text, sentenceId, timestamp: new Date().toISOString() });
+      const json = JSON.stringify({ type: 'transcription', speaker, text, sentenceId, final, timestamp: new Date().toISOString() });
       await this.room.localParticipant?.publishData?.(
         new TextEncoder().encode(json),
         { reliable: true, topic: 'captions' as any }
@@ -282,7 +286,7 @@ export class TranscriptionAgent {
       const chatLine = `[Transcript] ${speaker}: ${text}`;
       await this.room.localParticipant?.sendChatMessage(chatLine);
       // Log full transcription content for debugging / observability
-      console.log(`Transcription from ${speaker} (#${sentenceId ?? 0}): ${text}`);
+      console.log(`Transcription from ${speaker} (#${sentenceId ?? 0}${final ? ', final' : ''}): ${text}`);
     } catch (error) {
       console.error('Error sending transcription message:', error);
     }
@@ -342,28 +346,42 @@ export class TranscriptionAgent {
 
     const endsSentence = /[.!?…\)\]"\u3002！？。]$/.test(entry.text);
     if (endsSentence) {
-      await this.flushSentence(speaker);
+      await this.flushSentence(speaker, true);
       return;
     }
     // Pause-based flush after 2 seconds if no new text appended
     entry.timer = setTimeout(() => {
-      void this.flushSentence(speaker);
+      this.lastTimeoutFlushAt.set(speaker, Date.now());
+      void this.flushSentence(speaker, false);
     }, 2000);
   }
 
-  private async flushSentence(speaker: string) {
+  private async flushSentence(speaker: string, final: boolean) {
     const entry = this.pendingBySpeaker.get(speaker);
     if (!entry) return;
     const text = entry.text?.trim?.();
     if (!text) return;
     // reset before awaiting network calls
     if (entry.timer) clearTimeout(entry.timer);
-    this.pendingBySpeaker.set(speaker, { text: '' });
-    const nextId = (this.sentenceIdBySpeaker.get(speaker) ?? 0) + 1;
-    this.sentenceIdBySpeaker.set(speaker, nextId);
-    await this.sendTranscriptionMessage(speaker, text, nextId);
-    if (this.options.targetLanguage && this.options.targetLanguage !== 'en') {
-      await this.translateAndSend(text, speaker, nextId);
+    // Keep a stable sentenceId while the sentence is in progress;
+    // allocate new id only when starting a fresh sentence
+    let sid = this.currentSentenceId.get(speaker);
+    if (sid == null) {
+      sid = (this.sentenceIdBySpeaker.get(speaker) ?? 0) + 1;
+      this.sentenceIdBySpeaker.set(speaker, sid);
+      this.currentSentenceId.set(speaker, sid);
+    }
+    await this.sendTranscriptionMessage(speaker, text, sid, final);
+    if (final) {
+      // translate only on final to reduce cost; if desired, we can also update on non-final
+      if (this.options.targetLanguage && this.options.targetLanguage !== 'en') {
+        await this.translateAndSend(text, speaker, sid);
+      }
+      this.pendingBySpeaker.set(speaker, { text: '' });
+      this.currentSentenceId.delete(speaker);
+    } else {
+      // keep text for possible continuation; do not clear currentSentenceId
+      this.pendingBySpeaker.set(speaker, { text });
     }
   }
 
