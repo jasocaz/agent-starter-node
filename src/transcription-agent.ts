@@ -31,6 +31,7 @@ export class TranscriptionAgent {
   private recentBySpeaker: Map<string, { lastText: string; lastAt: number }>; // repetition guard
   private currentSentenceId: Map<string, number>; // active sentence id per speaker
   private lastTimeoutFlushAt: Map<string, number>; // for diagnostics
+  private lastInterimEmit: Map<string, { text: string; at: number }>; // throttle interim updates
 
   constructor(options: TranscriptionAgentOptions) {
     this.options = options;
@@ -43,6 +44,7 @@ export class TranscriptionAgent {
     this.recentBySpeaker = new Map();
     this.currentSentenceId = new Map();
     this.lastTimeoutFlushAt = new Map();
+    this.lastInterimEmit = new Map();
   }
 
   async start() {
@@ -282,9 +284,11 @@ export class TranscriptionAgent {
         new TextEncoder().encode(json),
         { reliable: true, topic: 'captions' as any }
       );
-      // Also send as chat to appear in built-in UI without bridging
-      const chatLine = `[Transcript] ${speaker}: ${text}`;
-      await this.room.localParticipant?.sendChatMessage(chatLine);
+      // Optional: also send as chat if explicitly enabled
+      if (String(process.env.AGENT_SEND_CHAT).toLowerCase() === 'true') {
+        const chatLine = `[Transcript] ${speaker}: ${text}`;
+        await this.room.localParticipant?.sendChatMessage(chatLine);
+      }
       // Log full transcription content for debugging / observability
       console.log(`Transcription from ${speaker} (#${sentenceId ?? 0}${final ? ', final' : ''}): ${text}`);
     } catch (error) {
@@ -325,8 +329,10 @@ export class TranscriptionAgent {
           new TextEncoder().encode(json),
           { reliable: true, topic: 'captions' as any }
         );
-        const chatLine = `[Translation] ${speaker}: ${translatedText}`;
-        await this.room.localParticipant?.sendChatMessage(chatLine);
+        if (String(process.env.AGENT_SEND_CHAT).toLowerCase() === 'true') {
+          const chatLine = `[Translation] ${speaker}: ${translatedText}`;
+          await this.room.localParticipant?.sendChatMessage(chatLine);
+        }
         // Log full translation content
         console.log(`Translation for ${speaker} (#${sentenceId ?? 0}): ${translatedText}`);
       }
