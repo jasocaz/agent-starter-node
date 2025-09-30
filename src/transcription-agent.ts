@@ -120,7 +120,7 @@ export class TranscriptionAgent {
     const reader = stream.getReader();
     let buffer: AudioFrame[] = [];
     let collectedMs = 0;
-    const targetMs = 3000;
+    const targetMs = Number(process.env.BUFFER_TARGET_MS ?? 1800); // smaller frames enable smoother interim
 
     const vadThreshold = Number(process.env.VAD_THRESHOLD ?? 800); // amplitude threshold (0..32767)
     try {
@@ -359,11 +359,12 @@ export class TranscriptionAgent {
       await this.flushSentence(speaker, true);
       return;
     }
-    // Pause-based flush after 2 seconds if no new text appended
+    // Pause-based flush after configurable delay if no new text appended
+    const pauseMs = Number(process.env.PAUSE_FINAL_MS ?? 2500);
     entry.timer = setTimeout(() => {
       this.lastTimeoutFlushAt.set(speaker, Date.now());
       void this.flushSentence(speaker, false);
-    }, 2000);
+    }, pauseMs);
   }
 
   private async flushSentence(speaker: string, final: boolean) {
