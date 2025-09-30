@@ -204,6 +204,7 @@ export class TranscriptionAgent {
       // Use per-participant STT language if available, otherwise fall back to agent defaults
       const participantPrefs = this.participantLanguagePrefs.get(participant.identity);
       const sttLang = participantPrefs?.sttLanguage || this.options.sttLanguage || process.env.STT_LANGUAGE;
+      console.log(`STT for ${participant.identity}: using ${sttLang || 'auto'} (prefs:`, participantPrefs, ')');
       
       const transcription = await this.openai.audio.transcriptions.create({
         file: await toFile(wav, 'audio.wav', { type: 'audio/wav' }),
@@ -351,6 +352,7 @@ export class TranscriptionAgent {
       // Use per-participant target language if available, otherwise fall back to agent defaults
       const participantPrefs = this.participantLanguagePrefs.get(speaker);
       const targetLang = participantPrefs?.targetLanguage || this.options.targetLanguage;
+      console.log(`Translation for ${speaker}: using target ${targetLang} (prefs:`, participantPrefs, ')');
       
       const translation = await this.openai.chat.completions.create({
         model: 'gpt-4o',
@@ -518,13 +520,16 @@ export class TranscriptionAgent {
       const text = new TextDecoder().decode(payload);
       const data = JSON.parse(text);
       
+      console.log('Agent received data:', { type: data.type, participantId: data.participantId, from: participant?.identity });
+      
       if (data.type === 'language_prefs' && data.participantId) {
         const { participantId, sttLanguage, targetLanguage } = data;
         this.participantLanguagePrefs.set(participantId, { sttLanguage, targetLanguage });
         console.log(`Language preferences for ${participantId}: STT=${sttLanguage || 'auto'}, Target=${targetLanguage || 'default'}`);
+        console.log('Current participant prefs:', Array.from(this.participantLanguagePrefs.entries()));
       }
     } catch (error) {
-      // Ignore non-JSON or malformed data
+      console.log('Failed to parse data message:', error);
     }
   }
 
