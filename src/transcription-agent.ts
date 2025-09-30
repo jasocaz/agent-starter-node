@@ -37,6 +37,7 @@ export class TranscriptionAgent {
   private weakEndWords: Set<string>;
   private punctGraceMs: number;
   private minCharsForFinal: number;
+  private participantLanguagePrefs: Map<string, { sttLanguage?: string; targetLanguage?: string }>; // per-participant language preferences
 
   constructor(options: TranscriptionAgentOptions) {
     this.options = options;
@@ -51,6 +52,7 @@ export class TranscriptionAgent {
     this.lastTimeoutFlushAt = new Map();
     this.lastInterimEmit = new Map();
     this.finalizeTimerBySpeaker = new Map();
+    this.participantLanguagePrefs = new Map();
     this.weakEndWords = new Set(
       (process.env.WEAK_END_WORDS || 'doing,going,is,are,was,were,about,with,to,for,like')
         .split(',')
@@ -84,6 +86,7 @@ export class TranscriptionAgent {
       this.room.on(RoomEvent.TrackSubscribed, this.handleTrackSubscribed.bind(this));
       this.room.on(RoomEvent.ParticipantConnected, this.handleParticipantConnected.bind(this));
       this.room.on(RoomEvent.Disconnected, this.handleDisconnected.bind(this));
+      this.room.on(RoomEvent.DataReceived, this.handleDataReceived.bind(this));
 
       this.isRunning = true;
       console.log('Transcription agent started');
@@ -197,7 +200,11 @@ export class TranscriptionAgent {
   private async processPcm16Frame(data: Int16Array, sampleRate: number, channels: number, participant: RemoteParticipant, rmsHint?: number, windowMs?: number) {
     try {
       const wav = this.encodeWav(data, sampleRate, channels);
-      const sttLang = this.options.sttLanguage || process.env.STT_LANGUAGE; // if unset, let model auto-detect
+      
+      // Use per-participant STT language if available, otherwise fall back to agent defaults
+      const participantPrefs = this.participantLanguagePrefs.get(participant.identity);
+      const sttLang = participantPrefs?.sttLanguage || this.options.sttLanguage || process.env.STT_LANGUAGE;
+      
       const transcription = await this.openai.audio.transcriptions.create({
         file: await toFile(wav, 'audio.wav', { type: 'audio/wav' }),
         model: process.env.OPENAI_STT_MODEL || 'gpt-4o-transcribe',
@@ -341,12 +348,16 @@ export class TranscriptionAgent {
 
   private async translateAndSend(text: string, speaker: string, sentenceId?: number) {
     try {
+      // Use per-participant target language if available, otherwise fall back to agent defaults
+      const participantPrefs = this.participantLanguagePrefs.get(speaker);
+      const targetLang = participantPrefs?.targetLanguage || this.options.targetLanguage;
+      
       const translation = await this.openai.chat.completions.create({
         model: 'gpt-4o',
         messages: [
           {
             role: 'system',
-            content: `Translate the following text to ${this.options.targetLanguage}. Return only the translation, no additional text.`,
+            content: `Translate the following text to ${targetLang}. Return only the translation, no additional text.`,
           },
           {
             role: 'user',
@@ -364,7 +375,7 @@ export class TranscriptionAgent {
           speaker,
           originalText: text,
           translatedText,
-          targetLanguage: this.options.targetLanguage,
+          targetLanguage: targetLang,
           sentenceId,
           timestamp: new Date().toISOString(),
         });
@@ -487,7 +498,9 @@ export class TranscriptionAgent {
     await this.sendTranscriptionMessage(speaker, text, sid, final);
     if (final) {
       // translate only on final to reduce cost; if desired, we can also update on non-final
-      if (this.options.targetLanguage) {
+      const participantPrefs = this.participantLanguagePrefs.get(speaker);
+      const targetLang = participantPrefs?.targetLanguage || this.options.targetLanguage;
+      if (targetLang) {
         await this.translateAndSend(text, speaker, sid);
       }
       this.pendingBySpeaker.set(speaker, { text: '' });
@@ -495,6 +508,23 @@ export class TranscriptionAgent {
     } else {
       // keep text for possible continuation; do not clear currentSentenceId
       this.pendingBySpeaker.set(speaker, { text });
+    }
+  }
+
+  private handleDataReceived(payload: Uint8Array, participant?: any, kind?: any, topic?: string) {
+    if (topic !== 'captions') return;
+    
+    try {
+      const text = new TextDecoder().decode(payload);
+      const data = JSON.parse(text);
+      
+      if (data.type === 'language_prefs' && data.participantId) {
+        const { participantId, sttLanguage, targetLanguage } = data;
+        this.participantLanguagePrefs.set(participantId, { sttLanguage, targetLanguage });
+        console.log(`Language preferences for ${participantId}: STT=${sttLanguage || 'auto'}, Target=${targetLanguage || 'default'}`);
+      }
+    } catch (error) {
+      // Ignore non-JSON or malformed data
     }
   }
 
