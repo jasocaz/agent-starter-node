@@ -177,8 +177,12 @@ export class TranscriptionAgent {
         const now = Date.now();
         const isRepeat = repInfo.lastText === transcribedText && (now - repInfo.lastAt) < Number(process.env.REPEAT_WINDOW_MS ?? 7000);
 
+        // Drop pure punctuation / breath noises mistakenly as "." or similar
+        const hasAlphaNum = /[\p{L}\p{N}]/u.test(transcribedText);
+        const punctOnly = !hasAlphaNum;
+
         // Drop conditions: obvious blocklist or low-energy very short repeats
-        if (isBlocked || (short && !highRms && isRepeat)) {
+        if (isBlocked || punctOnly || (short && !highRms && isRepeat)) {
           console.log(`Dropped low-confidence/repeat (#${this.sentenceIdBySpeaker.get(participant.identity) ?? 0}):`, transcribedText, { rms, wordCount });
           return;
         }
