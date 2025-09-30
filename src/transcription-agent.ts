@@ -36,9 +36,6 @@ export class TranscriptionAgent {
   private weakEndWords: Set<string>;
   private punctGraceMs: number;
   private minCharsForFinal: number;
-  private stabilityMs: number;
-  private lastStableBySpeaker: Map<string, { words: string; at: number }>; // last 3 words and when they last changed
-  private lastFinalBySpeaker: Map<string, string>; // to avoid duplicate tiny finals like "pace."
 
   constructor(options: TranscriptionAgentOptions) {
     this.options = options;
@@ -61,9 +58,6 @@ export class TranscriptionAgent {
     );
     this.punctGraceMs = Number(process.env.PUNCT_GRACE_MS ?? 900);
     this.minCharsForFinal = Number(process.env.MIN_CHARS_FOR_FINAL ?? 24);
-    this.stabilityMs = Number(process.env.STABILITY_MS ?? 600);
-    this.lastStableBySpeaker = new Map();
-    this.lastFinalBySpeaker = new Map();
   }
 
   async start() {
@@ -461,29 +455,14 @@ export class TranscriptionAgent {
     const pauseMs = Number(process.env.PAUSE_FINAL_MS ?? 2500);
     entry.timer = setTimeout(() => {
       this.lastTimeoutFlushAt.set(speaker, Date.now());
-      const current = (this.pendingBySpeaker.get(speaker)?.text || '').trim();
-      const endsPunct = /[.!?]$/.test(current);
-      const lastWords = current.split(/\s+/).slice(-3).join(' ').toLowerCase();
-      const ls = this.lastStableBySpeaker.get(speaker);
-      const now = Date.now();
-      if (!ls || ls.words !== lastWords) this.lastStableBySpeaker.set(speaker, { words: lastWords, at: now });
-      const stableEnough = !!ls && ls.words === lastWords && now - ls.at >= this.stabilityMs;
-
-      if (endsPunct) {
-        // finalize on punctuation
-        const ft = this.finalizeTimerBySpeaker.get(speaker);
-        if (ft) clearTimeout(ft);
+      // If a finalize timer exists, clear it and finalize now (pause wins)
+      const ft = this.finalizeTimerBySpeaker.get(speaker);
+      if (ft) {
+        clearTimeout(ft);
         this.finalizeTimerBySpeaker.delete(speaker);
         void this.flushSentence(speaker, true);
-      } else if (stableEnough) {
-        // finalize on stability
-        void this.flushSentence(speaker, true);
       } else {
-        // wait more up to grace window
-        const ft = setTimeout(() => {
-          void this.flushSentence(speaker, true);
-        }, this.punctGraceMs);
-        this.finalizeTimerBySpeaker.set(speaker, ft);
+        void this.flushSentence(speaker, false);
       }
     }, pauseMs);
   }
@@ -503,35 +482,7 @@ export class TranscriptionAgent {
       this.sentenceIdBySpeaker.set(speaker, sid);
       this.currentSentenceId.set(speaker, sid);
     }
-    // Overlap-aware final stitching: drop duplicate tail vs last final
-    let emitText = text;
-    if (final) {
-      const prevFinal = (this.lastFinalBySpeaker.get(speaker) || '').trim();
-      if (prevFinal) {
-        const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}'\s]+/gu, ' ').replace(/\s+/g, ' ').trim();
-        const pWords = norm(prevFinal).split(' ');
-        const cWords = norm(text).split(' ');
-        const maxOverlap = Math.min(10, pWords.length, cWords.length);
-        let k = 0;
-        for (let t = maxOverlap; t >= 1; t--) {
-          const suff = pWords.slice(pWords.length - t).join(' ');
-          const pref = cWords.slice(0, t).join(' ');
-          if (suff === pref) { k = t; break; }
-        }
-        if (k > 0) {
-          const wordRegex = /[\p{L}\p{N}']+/gu;
-          let idx = 0; let consumed = 0;
-          for (const w of text.matchAll(wordRegex)) {
-            consumed++;
-            if (consumed === k) { idx = (w.index ?? 0) + (w[0]?.length ?? 0); break; }
-          }
-          emitText = (prevFinal + (idx ? ' ' : '') + text.slice(idx)).trim();
-        }
-      }
-      this.lastFinalBySpeaker.set(speaker, emitText);
-    }
-
-    await this.sendTranscriptionMessage(speaker, final ? emitText : text, sid, final);
+    await this.sendTranscriptionMessage(speaker, text, sid, final);
     if (final) {
       // translate only on final to reduce cost; if desired, we can also update on non-final
       if (this.options.targetLanguage && this.options.targetLanguage !== 'en') {
