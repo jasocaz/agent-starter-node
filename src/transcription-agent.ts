@@ -385,8 +385,53 @@ export class TranscriptionAgent {
   // Buffer text until we detect a sentence end or a pause; then flush as one unit
   private async appendAndMaybeFlush(speaker: string, slice: string) {
     const entry = this.pendingBySpeaker.get(speaker) ?? { text: '' };
-    const needsSpace = entry.text && !/\s$/.test(entry.text);
-    entry.text = (entry.text + (needsSpace ? ' ' : '') + slice).trim();
+    // Overlap-aware merge: avoid duplicating words across chunk boundaries
+    const prev = entry.text || '';
+    const cleanedSlice = slice.trim();
+    const normalize = (s: string) =>
+      s
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}'\s]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const prevNorm = normalize(prev);
+    const sliceNorm = normalize(cleanedSlice);
+    const prevWords = prevNorm ? prevNorm.split(' ') : [];
+    const sliceWords = sliceNorm ? sliceNorm.split(' ') : [];
+    let dedupSlice = cleanedSlice;
+    // If slice looks like a superset of prev, prefer replacement to avoid duplicates
+    if (sliceNorm && prevNorm && sliceNorm.startsWith(prevNorm) && sliceNorm.length - prevNorm.length < 80) {
+      entry.text = cleanedSlice; // replace
+    } else {
+      // Find longest suffix(prefix) overlap up to 6 words
+      const maxOverlap = Math.min(6, prevWords.length, sliceWords.length);
+      let k = 0;
+      for (let t = maxOverlap; t >= 1; t--) {
+        const suff = prevWords.slice(prevWords.length - t).join(' ');
+        const pref = sliceWords.slice(0, t).join(' ');
+        if (suff === pref) {
+          k = t;
+          break;
+        }
+      }
+      if (k > 0) {
+        // Remove the overlapped prefix from the original slice string by words
+        const wordRegex = /[\p{L}\p{N}']+/gu;
+        let idx = 0;
+        let consumed = 0;
+        const m = cleanedSlice.matchAll(wordRegex);
+        for (const w of m) {
+          consumed++;
+          if (consumed === k) {
+            idx = (w.index ?? 0) + (w[0]?.length ?? 0);
+            break;
+          }
+        }
+        dedupSlice = cleanedSlice.slice(idx).trimStart();
+      }
+      const needsSpace = prev && dedupSlice && !/\s$/.test(prev);
+      entry.text = (prev + (needsSpace ? ' ' : '') + dedupSlice).trim();
+    }
     // clear previous pause timer
     if (entry.timer) clearTimeout(entry.timer);
     this.pendingBySpeaker.set(speaker, entry);
