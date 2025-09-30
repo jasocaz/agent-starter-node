@@ -32,6 +32,10 @@ export class TranscriptionAgent {
   private currentSentenceId: Map<string, number>; // active sentence id per speaker
   private lastTimeoutFlushAt: Map<string, number>; // for diagnostics
   private lastInterimEmit: Map<string, { text: string; at: number }>; // throttle interim updates
+  private finalizeTimerBySpeaker: Map<string, NodeJS.Timeout>; // grace window after punctuation
+  private weakEndWords: Set<string>;
+  private punctGraceMs: number;
+  private minCharsForFinal: number;
 
   constructor(options: TranscriptionAgentOptions) {
     this.options = options;
@@ -45,6 +49,15 @@ export class TranscriptionAgent {
     this.currentSentenceId = new Map();
     this.lastTimeoutFlushAt = new Map();
     this.lastInterimEmit = new Map();
+    this.finalizeTimerBySpeaker = new Map();
+    this.weakEndWords = new Set(
+      (process.env.WEAK_END_WORDS || 'doing,going,is,are,was,were,about,with,to,for,like')
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean),
+    );
+    this.punctGraceMs = Number(process.env.PUNCT_GRACE_MS ?? 900);
+    this.minCharsForFinal = Number(process.env.MIN_CHARS_FOR_FINAL ?? 24);
   }
 
   async start() {
@@ -356,14 +369,32 @@ export class TranscriptionAgent {
 
     const endsSentence = /[.!?…\)\]"\u3002！？。]$/.test(entry.text);
     if (endsSentence) {
-      await this.flushSentence(speaker, true);
-      return;
+      // Only finalize if strong ending (not weak end word) and grace window passes and min length
+      const lastWord = entry.text.split(/\s+/).pop()?.replace(/[^\p{L}\p{N}]+/gu, '').toLowerCase() || '';
+      const strongEnd = !this.weakEndWords.has(lastWord) && entry.text.length >= this.minCharsForFinal;
+      if (strongEnd) {
+        // Delay finalize slightly to allow trailing continuation
+        if (this.finalizeTimerBySpeaker.get(speaker)) clearTimeout(this.finalizeTimerBySpeaker.get(speaker)!);
+        const t = setTimeout(() => {
+          void this.flushSentence(speaker, true);
+        }, this.punctGraceMs);
+        this.finalizeTimerBySpeaker.set(speaker, t);
+      }
+      // Do not return; continue with interim + pause logic to handle continuation
     }
     // Pause-based flush after configurable delay if no new text appended
     const pauseMs = Number(process.env.PAUSE_FINAL_MS ?? 2500);
     entry.timer = setTimeout(() => {
       this.lastTimeoutFlushAt.set(speaker, Date.now());
-      void this.flushSentence(speaker, false);
+      // If a finalize timer exists, clear it and finalize now (pause wins)
+      const ft = this.finalizeTimerBySpeaker.get(speaker);
+      if (ft) {
+        clearTimeout(ft);
+        this.finalizeTimerBySpeaker.delete(speaker);
+        void this.flushSentence(speaker, true);
+      } else {
+        void this.flushSentence(speaker, false);
+      }
     }, pauseMs);
   }
 
