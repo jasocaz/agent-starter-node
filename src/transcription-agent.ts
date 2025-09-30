@@ -134,6 +134,8 @@ export class TranscriptionAgent {
     let buffer: AudioFrame[] = [];
     let collectedMs = 0;
     const targetMs = Number(process.env.BUFFER_TARGET_MS ?? 1800); // smaller frames enable smoother interim
+    const overlapMs = Number(process.env.OVERLAP_MS ?? 300);
+    let prevTail: Int16Array | null = null;
 
     const vadThreshold = Number(process.env.VAD_THRESHOLD ?? 800); // amplitude threshold (0..32767)
     try {
@@ -154,10 +156,32 @@ export class TranscriptionAgent {
           const combined = combineAudioFrames(buffer);
           buffer = [];
           collectedMs = 0;
-          if (this.computeRms(combined.data) < vadThreshold) {
+          // Prepare overlap-prepended PCM to avoid boundary word loss
+          let data = combined.data;
+          if (prevTail && prevTail.length > 0) {
+            const merged = new Int16Array(prevTail.length + data.length);
+            merged.set(prevTail, 0);
+            merged.set(data, prevTail.length);
+            data = merged;
+          }
+          // Compute new tail from the end of this chunk
+          const tailSamples = Math.min(
+            Math.floor((overlapMs / 1000) * combined.sampleRate) * combined.channels,
+            data.length,
+          );
+          prevTail = data.slice(data.length - tailSamples);
+
+          if (this.computeRms(data) < vadThreshold) {
             continue;
           }
-          await this.processPcm16Frame(combined.data, combined.sampleRate, combined.channels, participant, this.computeRms(combined.data), collectedMs);
+          await this.processPcm16Frame(
+            data,
+            combined.sampleRate,
+            combined.channels,
+            participant,
+            this.computeRms(data),
+            targetMs,
+          );
         }
       }
     } catch (err) {
