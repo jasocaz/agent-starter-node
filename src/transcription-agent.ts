@@ -86,7 +86,7 @@ export class TranscriptionAgent {
       // Flush any pending buffered text before leaving
       await Promise.all(
         Array.from(this.pendingBySpeaker.entries()).map(([speaker, pending]) =>
-          pending.text ? this.flushSentence(speaker) : Promise.resolve(),
+          pending.text ? this.flushSentence(speaker, true) : Promise.resolve(),
         ),
       );
       this.pendingBySpeaker.clear();
